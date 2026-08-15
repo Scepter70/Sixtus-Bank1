@@ -283,10 +283,10 @@ def create_admin(username: str, full_name: str, password: str) -> None:
             raise ValueError("That username is already taken.") from error
 
 
-def create_customer(
-    username: str, full_name: str, password: str,
-    initial_deposit: str | float | int, initial_currency: str = "USD"
-) -> tuple[str, int]:
+def create_customer(username: str, full_name: str, password: str) -> tuple[str, int]:
+    """Open a new customer vault. Accounts always start at a zero balance —
+    customers cannot fund their own account at signup; only a Vault Keeper
+    (admin) can credit funds afterward via the Keeper's Console."""
     if len(username.strip()) < 3:
         raise ValueError("Username must be at least 3 characters.")
     if not username.replace("_", "").replace("-", "").isalnum():
@@ -295,12 +295,6 @@ def create_customer(
         raise ValueError("Password must be at least 8 characters.")
     if len(full_name.strip()) < 2:
         raise ValueError("Enter the account holder's full name.")
-    if initial_currency not in SUPPORTED_CURRENCIES:
-        raise ValueError("Choose a supported opening currency.")
-
-    deposit_cents = 0
-    if str(initial_deposit).strip():
-        deposit_cents = parse_amount(initial_deposit)
 
     with get_db() as connection:
         account_number = generate_account_number(connection)
@@ -310,13 +304,11 @@ def create_customer(
                 INSERT INTO users (
                     username, full_name, password_hash, role, account_number,
                     balance_cents, created_at
-                ) VALUES (?, ?, ?, 'customer', ?, ?, ?)
+                ) VALUES (?, ?, ?, 'customer', ?, 0, ?)
                 """,
                 (
                     username.strip(), full_name.strip(), hash_password(password),
-                    account_number,
-                    deposit_cents if initial_currency == "USD" else 0,
-                    now_iso(),
+                    account_number, now_iso(),
                 ),
             )
         except sqlite3.IntegrityError as error:
@@ -325,28 +317,7 @@ def create_customer(
             raise ValueError("Could not create the account. Please try again.") from error
 
         ensure_user_wallets(connection, cursor.lastrowid)
-        if deposit_cents:
-            connection.execute(
-                """
-                INSERT INTO transactions (
-                    user_id, transaction_type, currency, amount_cents,
-                    balance_after_cents, note, created_at
-                ) VALUES (?, 'deposit', ?, ?, ?, ?, ?)
-                """,
-                (
-                    cursor.lastrowid, initial_currency, deposit_cents,
-                    deposit_cents, "Opening deposit", now_iso(),
-                ),
-            )
-            connection.execute(
-                """
-                UPDATE wallets
-                SET balance_cents = balance_cents + ?
-                WHERE user_id = ? AND currency = ?
-                """,
-                (deposit_cents, cursor.lastrowid, initial_currency),
-            )
-    return account_number, deposit_cents
+    return account_number, 0
 
 
 def update_balance(
@@ -1125,16 +1096,18 @@ def show_login_page():
             full_name = st.text_input("Full Name", placeholder="Full Legal Name")
             username = st.text_input("Choose Username", placeholder="vaultmember")
             password = st.text_input("Create Password", type="password", placeholder="Minimum 8 characters")
-            opening_deposit = st.text_input("Opening Deposit (optional)", value="0.00")
-            opening_currency = st.selectbox("Opening Currency", currency_codes(), format_func=currency_label)
+            st_html("""
+            <p style="color:#7a7a8a;font-size:11px;margin:-6px 0 8px;font-family:'Inter',sans-serif;line-height:1.6;">
+                🔒 New vaults open at a zero balance. Only a Vault Keeper (admin) can credit funds to your account —
+                once opened, you can deposit, withdraw, and exchange currencies yourself.
+            </p>
+            """, height=50)
             submitted = st.form_submit_button("Create Vault Account", use_container_width=True)
             if submitted:
                 try:
-                    account_number, deposit_cents = create_customer(
-                        username, full_name, password, opening_deposit, opening_currency
-                    )
-                    st.success(f"✅ Vault opened! Account: **{account_number}** · Balance: {format_money(deposit_cents, opening_currency)}")
-                    st.info("Use your credentials to access the vault above.")
+                    account_number, deposit_cents = create_customer(username, full_name, password)
+                    st.success(f"✅ Vault opened! Account: **{account_number}** · Balance: {format_money(0)}")
+                    st.info("Use your credentials to access the vault above. Ask a Vault Keeper to fund your account.")
                 except (ValueError, InvalidOperation) as e:
                     st.error(f"❌ {e}")
 
