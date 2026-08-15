@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import hashlib
@@ -43,6 +42,15 @@ TEXT_SECONDARY = "#7a7a8a"
 SUCCESS = "#00d4aa"
 DANGER = "#ff4757"
 ONYX_GLASS = "rgba(8, 8, 12, 0.72)"
+
+# ── Hero Imagery (real photography per interface, Unsplash CDN) ──
+HERO_IMAGES = {
+    "landing": "https://images.unsplash.com/photo-1601597111158-2fceff292cdc?auto=format&fit=crop&w=1600&q=80",
+    "login": "https://images.unsplash.com/photo-1563013544-824ae1b704d3?auto=format&fit=crop&w=1600&q=80",
+    "customer": "https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?auto=format&fit=crop&w=1600&q=80",
+    "admin": "https://images.unsplash.com/photo-1521791136064-7986c2920216?auto=format&fit=crop&w=1600&q=80",
+    "setup": "https://images.unsplash.com/photo-1454165804606-c3d57bc86b40?auto=format&fit=crop&w=1600&q=80",
+}
 
 
 @contextmanager
@@ -922,7 +930,86 @@ def show_vault_logo():
     """, height=90)
 
 
+def hero_banner(
+    image_key: str,
+    eyebrow: str,
+    title_html: str,
+    subtitle: str,
+    height: int = 340,
+) -> None:
+    """Render a full-width photographic hero banner for a given interface,
+    with a dark gold-tinted overlay so text stays readable, a slow Ken-Burns
+    zoom on the image, and a soft fade/rise-in for the text on load."""
+    image_url = HERO_IMAGES.get(image_key, HERO_IMAGES["landing"])
+    st_html(f"""
+    <div class="hero-banner" style="
+        position:relative;
+        width:100%;
+        height:{height - 26}px;
+        border-radius:22px;
+        overflow:hidden;
+        margin-bottom:26px;
+        border:1px solid rgba(212,175,55,0.14);
+        box-shadow:0 20px 60px rgba(0,0,0,0.55), inset 0 0 0 1px rgba(212,175,55,0.04);
+        z-index:2;
+    ">
+        <div class="hero-img" style="
+            position:absolute; inset:0;
+            background-image:
+                linear-gradient(180deg, rgba(3,3,5,0.55) 0%, rgba(3,3,5,0.78) 55%, rgba(3,3,5,0.95) 100%),
+                linear-gradient(90deg, rgba(3,3,5,0.85) 0%, rgba(3,3,5,0.35) 45%, rgba(3,3,5,0.65) 100%),
+                url('{image_url}');
+            background-size: cover;
+            background-position: center;
+            animation: heroKenBurns 22s ease-in-out infinite alternate;
+        "></div>
+
+        <div class="hero-shimmer" style="
+            position:absolute; inset:0;
+            background:linear-gradient(120deg, transparent 30%, rgba(212,175,55,0.06) 50%, transparent 70%);
+            background-size:200% 200%;
+            animation:heroShimmer 8s ease-in-out infinite;
+            pointer-events:none;
+        "></div>
+
+        <div class="hero-text" style="
+            position:relative; z-index:2;
+            height:100%;
+            display:flex; flex-direction:column; justify-content:center;
+            padding:0 44px;
+            animation:heroRiseIn 1.1s cubic-bezier(0.16,1,0.3,1) both;
+        ">
+            <div class="cinzel" style="color:#ffbf00;font-size:11px;letter-spacing:4px;text-transform:uppercase;margin-bottom:14px;opacity:0.9;">{eyebrow}</div>
+            <h1 class="cinzel" style="color:#f5f5fa;font-size:34px;font-weight:800;line-height:1.25;margin:0 0 14px;max-width:640px;text-shadow:0 4px 24px rgba(0,0,0,0.6);">{title_html}</h1>
+            <p style="color:#d8d8e2;font-size:14px;max-width:520px;line-height:1.7;margin:0;font-family:'Inter',sans-serif;text-shadow:0 2px 10px rgba(0,0,0,0.5);">{subtitle}</p>
+        </div>
+    </div>
+
+    <style>
+    @keyframes heroKenBurns {{
+        0% {{ transform: scale(1.0); }}
+        100% {{ transform: scale(1.12); }}
+    }}
+    @keyframes heroShimmer {{
+        0%, 100% {{ background-position: 0% 50%; }}
+        50% {{ background-position: 100% 50%; }}
+    }}
+    @keyframes heroRiseIn {{
+        0% {{ opacity:0; transform: translateY(18px); }}
+        100% {{ opacity:1; transform: translateY(0); }}
+    }}
+    </style>
+    """, height=height + 10)
+
+
 def show_first_run_setup():
+    hero_banner(
+        "setup",
+        "Vault Initialization",
+        "Secure the Treasury<br>From Day One",
+        "Create the first vault keeper account to bring Sixtus Bank online. This sacred step is required once, and only once.",
+        height=300,
+    )
     st_html("""
     <div style="max-width:460px;margin:0 auto;padding:40px 0;position:relative;z-index:2;">
         <div style="text-align:center;margin-bottom:40px;">
@@ -955,25 +1042,13 @@ def show_first_run_setup():
 
 
 def show_landing_page():
-    st_html("""
-    <div style="text-align:center;padding:50px 20px 40px;position:relative;z-index:2;">
-        <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:350px;height:350px;background:radial-gradient(circle, rgba(212,175,55,0.06) 0%, transparent 70%);border-radius:50%;animation:heroGlowVault 5s ease-in-out infinite;"></div>
-        <h1 class="cinzel" style="font-size:42px;font-weight:800;color:#f0f0f5;margin-bottom:16px;position:relative;letter-spacing:2px;line-height:1.2;">
-            Where Wealth<br><span style="background:linear-gradient(135deg,#d4af37,#ffbf00,#b87333);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Becomes Art</span>
-        </h1>
-        <p style="font-size:15px;color:#7a7a8a;max-width:480px;margin:0 auto 32px;line-height:1.7;font-family:'Inter',sans-serif;">
-            Move capital across currencies with sovereign confidence — crystalline exchange, vault-grade security, and an interface forged for the discerning few.
-        </p>
-        <div style="display:flex;justify-content:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
-            <span style="font-size:11px;color:#b87333;font-family:'Cinzel',serif;letter-spacing:3px;">EST. MMXXVI</span>
-            <span style="font-size:11px;color:#3a3a4a;">|</span>
-            <span style="font-size:11px;color:#7a7a8a;font-family:'Cinzel',serif;letter-spacing:2px;">PRIVATE BANKING</span>
-        </div>
-        <style>
-        @keyframes heroGlowVault { 0%,100%{transform:translate(-50%,-50%) scale(1);opacity:0.4;} 50%{transform:translate(-50%,-50%) scale(1.15);opacity:0.7;} }
-        </style>
-    </div>
-    """, height=260)
+    hero_banner(
+        "landing",
+        "Est. MMXXVI · Private Banking",
+        'Where Wealth<br><span style="background:linear-gradient(135deg,#d4af37,#ffbf00,#b87333);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Becomes Art</span>',
+        "Move capital across currencies with sovereign confidence — crystalline exchange, vault-grade security, and an interface forged for the discerning few.",
+        height=380,
+    )
 
     col1, col2, col3 = st.columns(3)
     with col1:
@@ -1021,14 +1096,13 @@ def show_landing_page():
 
 
 def show_login_page():
-    st_html("""
-    <div style="max-width:420px;margin:0 auto;padding:20px 0;position:relative;z-index:2;">
-        <div style="text-align:center;margin-bottom:28px;">
-            <h2 class="cinzel" style="color:#f0f0f5;margin:0 0 8px;font-size:24px;letter-spacing:1px;">Vault Access</h2>
-            <p style="color:#7a7a8a;margin:0;font-size:12px;font-family:'Inter',sans-serif;">Authenticate to enter the treasury</p>
-        </div>
-    </div>
-    """, height=90)
+    hero_banner(
+        "login",
+        "Secure Access",
+        "Your Vault,<br>One Signature Away",
+        "Authenticate to enter the treasury, or open a new sovereign account in moments.",
+        height=260,
+    )
 
     login_tab, create_tab = st.tabs(["🔐 Sign In", "📝 Open Account"])
 
@@ -1082,12 +1156,13 @@ def show_customer_dashboard(user):
             st.session_state.user_id = None
             st.rerun()
 
-    st_html(f"""
-    <div style="padding:10px 0 20px;position:relative;z-index:2;">
-        <h2 class="cinzel" style="color:#f0f0f5;margin:0;font-size:22px;letter-spacing:1px;">Treasury</h2>
-        <p style="color:#7a7a8a;margin:4px 0 0;font-size:12px;font-family:'Inter',sans-serif;">Manage your vaults, transactions, and currency exchanges</p>
-    </div>
-    """, height=70)
+    hero_banner(
+        "customer",
+        f"Welcome back, {user['full_name'].split()[0]}",
+        "Your Treasury,<br>At a Glance",
+        "Manage your vaults, move funds, and exchange currencies — all under one sovereign roof.",
+        height=240,
+    )
 
     wallets = get_wallets(user["id"])
     cols = st.columns(min(len(wallets), 4))
@@ -1291,12 +1366,13 @@ def show_admin_dashboard(user):
             st.session_state.user_id = None
             st.rerun()
 
-    st_html("""
-    <div style="padding:10px 0 20px;position:relative;z-index:2;">
-        <h2 class="cinzel" style="color:#f0f0f5;margin:0;font-size:22px;letter-spacing:1px;">Keeper's Console</h2>
-        <p style="color:#7a7a8a;margin:4px 0 0;font-size:12px;font-family:'Inter',sans-serif;">System overview, treasury management, and vault controls</p>
-    </div>
-    """, height=70)
+    hero_banner(
+        "admin",
+        "Keeper's Console",
+        "Command the<br>Entire Treasury",
+        "System overview, treasury management, and vault controls for every member of Sixtus Bank.",
+        height=240,
+    )
 
     total_deposits = get_total_deposits()
     trans_count = get_transaction_count()
