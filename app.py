@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import os
@@ -28,6 +29,13 @@ SUPPORTED_CURRENCIES = {
     "JPY": {"name": "Japanese Yen", "symbol": "¥", "usd_per_unit": "0.0067"},
     "NGN": {"name": "Nigerian Naira", "symbol": "₦", "usd_per_unit": "0.00065"},
 }
+
+DESTINATION_COUNTRIES = [
+    "United States", "United Kingdom", "Nigeria", "Canada", "Germany", "France",
+    "Ireland", "Switzerland", "Australia", "Japan", "South Africa", "Ghana",
+    "Kenya", "United Arab Emirates", "China", "India", "Netherlands", "Spain",
+    "Italy", "Singapore", "Other",
+]
 
 # ── Crystalline Obsidian Vault Palette ──
 OBSIDIAN = "#030305"
@@ -121,6 +129,26 @@ def initialize_database() -> None:
             connection.execute(
                 "ALTER TABLE transactions ADD COLUMN currency TEXT NOT NULL DEFAULT 'USD'"
             )
+        if "destination_account" not in transaction_columns:
+            connection.execute("ALTER TABLE transactions ADD COLUMN destination_account TEXT")
+        if "destination_bank" not in transaction_columns:
+            connection.execute("ALTER TABLE transactions ADD COLUMN destination_bank TEXT")
+        if "destination_country" not in transaction_columns:
+            connection.execute("ALTER TABLE transactions ADD COLUMN destination_country TEXT")
+
+        user_columns = {
+            row["name"] for row in connection.execute("PRAGMA table_info(users)")
+        }
+        if "email" not in user_columns:
+            connection.execute("ALTER TABLE users ADD COLUMN email TEXT")
+        if "date_of_birth" not in user_columns:
+            connection.execute("ALTER TABLE users ADD COLUMN date_of_birth TEXT")
+        if "profile_picture" not in user_columns:
+            connection.execute("ALTER TABLE users ADD COLUMN profile_picture TEXT")
+        if "phone" not in user_columns:
+            connection.execute("ALTER TABLE users ADD COLUMN phone TEXT")
+        if "country" not in user_columns:
+            connection.execute("ALTER TABLE users ADD COLUMN country TEXT")
 
         for existing_user in connection.execute("SELECT id, balance_cents FROM users"):
             ensure_user_wallets(connection, existing_user["id"], existing_user["balance_cents"])
@@ -320,15 +348,58 @@ def create_customer(username: str, full_name: str, password: str) -> tuple[str, 
     return account_number, 0
 
 
+def update_profile(
+    user_id: int,
+    email: str | None = None,
+    date_of_birth: str | None = None,
+    phone: str | None = None,
+    country: str | None = None,
+    profile_picture_b64: str | None = None,
+) -> None:
+    """Update a customer's personal profile details. Any field left as None
+    is left unchanged; pass an empty string to explicitly clear a field."""
+    fields = {
+        "email": email,
+        "date_of_birth": date_of_birth,
+        "phone": phone,
+        "country": country,
+    }
+    updates = []
+    params = []
+    for column, value in fields.items():
+        if value is not None:
+            updates.append(f"{column} = ?")
+            params.append(value.strip() or None)
+    if profile_picture_b64 is not None:
+        updates.append("profile_picture = ?")
+        params.append(profile_picture_b64 or None)
+
+    if not updates:
+        return
+
+    with get_db() as connection:
+        query = f"UPDATE users SET {', '.join(updates)} WHERE id = ?"
+        params.append(user_id)
+        connection.execute(query, tuple(params))
+
+
 def update_balance(
     user_id: int, transaction_type: str, amount: str | float | int,
-    note: str, currency: str = "USD"
+    note: str, currency: str = "USD",
+    destination_account: str | None = None,
+    destination_bank: str | None = None,
+    destination_country: str | None = None,
 ) -> int:
     amount_cents = parse_amount(amount)
     if transaction_type not in {"deposit", "withdrawal"}:
         raise ValueError("Unsupported transaction.")
     if currency not in SUPPORTED_CURRENCIES:
         raise ValueError("Choose a supported currency.")
+    if transaction_type == "withdrawal":
+        if not destination_account or not destination_account.strip():
+            raise ValueError("Enter the destination account number.")
+        if not destination_country or not destination_country.strip():
+            raise ValueError("Select the destination country.")
 
     with get_db() as connection:
         user = connection.execute(
@@ -365,12 +436,16 @@ def update_balance(
             """
             INSERT INTO transactions (
                 user_id, transaction_type, currency, amount_cents,
-                balance_after_cents, note, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                balance_after_cents, note, created_at,
+                destination_account, destination_bank, destination_country
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 user_id, transaction_type, currency, amount_cents,
                 new_balance, note.strip() or None, now_iso(),
+                (destination_account or "").strip() or None,
+                (destination_bank or "").strip() or None,
+                (destination_country or "").strip() or None,
             ),
         )
     return new_balance
@@ -447,7 +522,8 @@ def get_transactions(user_id: int, limit: int = 10) -> list[sqlite3.Row]:
     with get_db() as connection:
         return connection.execute(
             """
-            SELECT transaction_type, currency, amount_cents, balance_after_cents, note, created_at
+            SELECT transaction_type, currency, amount_cents, balance_after_cents, note,
+                   destination_account, destination_bank, destination_country, created_at
             FROM transactions
             WHERE user_id = ?
             ORDER BY id DESC
@@ -476,7 +552,7 @@ def get_customers() -> list[sqlite3.Row]:
     with get_db() as connection:
         return connection.execute(
             """
-            SELECT id, username, full_name, account_number, balance_cents, created_at
+            SELECT id, username, full_name, account_number, balance_cents, created_at, email
             FROM users
             WHERE role = 'customer'
             ORDER BY created_at DESC
@@ -1114,11 +1190,14 @@ def show_login_page():
 
 def show_customer_dashboard(user):
     with st.sidebar:
+        avatar_html = (
+            f'<img src="{user["profile_picture"]}" style="width:64px;height:64px;border-radius:50%;object-fit:cover;border:1px solid rgba(212,175,55,0.3);" />'
+            if user["profile_picture"]
+            else f'<div style="width:64px;height:64px;background:linear-gradient(135deg,rgba(212,175,55,0.2),rgba(184,115,51,0.1));border:1px solid rgba(212,175,55,0.2);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:800;color:#d4af37;font-family:\'Cinzel\',serif;box-shadow:0 0 20px rgba(212,175,55,0.1);">{user["full_name"][0].upper()}</div>'
+        )
         st_html(f"""
         <div style="text-align:center;padding:10px 0 24px;position:relative;z-index:2;">
-            <div style="width:64px;height:64px;background:linear-gradient(135deg,rgba(212,175,55,0.2),rgba(184,115,51,0.1));border:1px solid rgba(212,175,55,0.2);border-radius:50%;margin:0 auto 12px;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:800;color:#d4af37;font-family:'Cinzel',serif;box-shadow:0 0 20px rgba(212,175,55,0.1);">
-                {user['full_name'][0].upper()}
-            </div>
+            <div style="margin:0 auto 12px;width:64px;">{avatar_html}</div>
             <div style="color:#f0f0f5;font-weight:600;font-size:14px;font-family:'Inter',sans-serif;">{user['full_name']}</div>
             <div style="color:#7a7a8a;font-size:10px;margin-top:3px;font-family:'Inter',sans-serif;letter-spacing:1px;">{user['account_number']}</div>
             <div style="display:inline-block;background:rgba(0,212,170,0.08);color:#00d4aa;padding:3px 12px;border-radius:10px;font-size:9px;font-weight:600;margin-top:10px;text-transform:uppercase;letter-spacing:2px;font-family:'Cinzel',serif;border:1px solid rgba(0,212,170,0.15);">Member</div>
@@ -1169,7 +1248,9 @@ def show_customer_dashboard(user):
 
     st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
 
-    trans_tab, exchange_tab, history_tab = st.tabs(["💰 Deposit / Withdraw", "🔄 Exchange", "📜 Ledger"])
+    trans_tab, exchange_tab, history_tab, profile_tab = st.tabs(
+        ["💰 Deposit / Withdraw", "🔄 Exchange", "📜 Ledger", "🪪 Profile"]
+    )
 
     with trans_tab:
         c1, c2 = st.columns(2)
@@ -1188,14 +1269,26 @@ def show_customer_dashboard(user):
                         st.error(f"❌ {e}")
         with c2:
             st_html("""<div class="cinzel" style="color:#d4af37;font-weight:600;margin-bottom:10px;font-size:13px;letter-spacing:1px;">Withdraw from Vault</div>""", height=30)
+            st_html("""<p style="color:#7a7a8a;font-size:11px;margin:-4px 0 10px;font-family:'Inter',sans-serif;">Withdrawals are sent as a transfer — enter where the funds are going.</p>""", height=28)
             with st.form("withdraw_form"):
                 wd_currency = st.selectbox("Currency", currency_codes(), format_func=currency_label, key="wd_curr")
                 wd_amount = st.text_input("Amount", placeholder="50.00", key="wd_amt")
+                wd_dest_account = st.text_input("Destination Account Number", placeholder="e.g. 0123456789", key="wd_dest_acc")
+                wd_dest_bank = st.text_input("Destination Bank (optional)", placeholder="e.g. Chase, GTBank", key="wd_dest_bank")
+                wd_dest_country = st.selectbox("Destination Country", DESTINATION_COUNTRIES, key="wd_dest_country")
                 wd_note = st.text_input("Note (optional)", placeholder="ATM withdrawal", key="wd_note")
                 if st.form_submit_button("Withdraw", use_container_width=True):
                     try:
-                        new_bal = update_balance(user["id"], "withdrawal", wd_amount, wd_note or "Withdrawal", wd_currency)
-                        st.success(f"✅ Withdrew {format_money(int(float(wd_amount)*100), wd_currency)}. New balance: {format_money(new_bal, wd_currency)}")
+                        new_bal = update_balance(
+                            user["id"], "withdrawal", wd_amount, wd_note or "Withdrawal", wd_currency,
+                            destination_account=wd_dest_account,
+                            destination_bank=wd_dest_bank,
+                            destination_country=wd_dest_country,
+                        )
+                        st.success(
+                            f"✅ Withdrew {format_money(int(float(wd_amount)*100), wd_currency)} to account "
+                            f"{wd_dest_account} ({wd_dest_country}). New balance: {format_money(new_bal, wd_currency)}"
+                        )
                         st.rerun()
                     except Exception as e:
                         st.error(f"❌ {e}")
@@ -1221,11 +1314,17 @@ def show_customer_dashboard(user):
             data = []
             for t in trans:
                 icon = "🟢" if t["transaction_type"] == "deposit" else "🔴"
+                destination = "—"
+                if t["transaction_type"] == "withdrawal" and t["destination_account"]:
+                    bank_part = f" · {t['destination_bank']}" if t["destination_bank"] else ""
+                    country_part = f" ({t['destination_country']})" if t["destination_country"] else ""
+                    destination = f"{t['destination_account']}{bank_part}{country_part}"
                 data.append({
                     "Type": f"{icon} {t['transaction_type'].title()}",
                     "Currency": t["currency"],
                     "Amount": format_money(t["amount_cents"], t["currency"]),
                     "Balance After": format_money(t["balance_after_cents"], t["currency"]),
+                    "Sent To": destination,
                     "Note": t["note"] or "—",
                     "Date": t["created_at"][:19].replace("T", " ")
                 })
@@ -1247,6 +1346,57 @@ def show_customer_dashboard(user):
                     "Date": t["created_at"][:19].replace("T", " ")
                 })
             st.dataframe(ex_data, use_container_width=True, hide_index=True)
+
+    with profile_tab:
+        st_html("""<div class="cinzel" style="color:#d4af37;font-weight:600;margin-bottom:14px;font-size:13px;letter-spacing:1px;">Personal Profile</div>""", height=30)
+
+        pc1, pc2 = st.columns([1, 2])
+        with pc1:
+            avatar_html = (
+                f'<img src="{user["profile_picture"]}" style="width:120px;height:120px;border-radius:50%;object-fit:cover;border:2px solid rgba(212,175,55,0.3);box-shadow:0 0 24px rgba(212,175,55,0.1);" />'
+                if user["profile_picture"]
+                else f'<div style="width:120px;height:120px;background:linear-gradient(135deg,rgba(212,175,55,0.2),rgba(184,115,51,0.1));border:2px solid rgba(212,175,55,0.2);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:40px;font-weight:800;color:#d4af37;font-family:\'Cinzel\',serif;">{user["full_name"][0].upper()}</div>'
+            )
+            st_html(f'<div style="display:flex;justify-content:center;padding:10px 0;">{avatar_html}</div>', height=150)
+            photo = st.file_uploader("Update profile picture", type=["png", "jpg", "jpeg"], key="profile_photo")
+            if photo is not None:
+                mime = photo.type or "image/png"
+                b64 = base64.b64encode(photo.getvalue()).decode()
+                data_url = f"data:{mime};base64,{b64}"
+                if st.button("Save Photo", use_container_width=True, key="save_photo_btn"):
+                    update_profile(user["id"], profile_picture_b64=data_url)
+                    st.success("✅ Profile picture updated.")
+                    st.rerun()
+
+        with pc2:
+            with st.form("profile_form"):
+                pf_email = st.text_input("Email", value=user["email"] or "", placeholder="you@gmail.com")
+                pf_phone = st.text_input("Phone Number", value=user["phone"] or "", placeholder="+234 800 000 0000")
+                pf_dob = st.date_input(
+                    "Date of Birth",
+                    value=datetime.strptime(user["date_of_birth"], "%Y-%m-%d").date() if user["date_of_birth"] else None,
+                    min_value=datetime(1920, 1, 1).date(),
+                    max_value=datetime.now(timezone.utc).date(),
+                )
+                pf_country = st.selectbox(
+                    "Country of Residence", DESTINATION_COUNTRIES,
+                    index=DESTINATION_COUNTRIES.index(user["country"]) if user["country"] in DESTINATION_COUNTRIES else 0,
+                )
+                if st.form_submit_button("Save Profile", use_container_width=True):
+                    try:
+                        update_profile(
+                            user["id"],
+                            email=pf_email,
+                            phone=pf_phone,
+                            date_of_birth=pf_dob.isoformat() if pf_dob else "",
+                            country=pf_country,
+                        )
+                        st.success("✅ Profile updated.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ {e}")
+
+
 
 
 def admin_add_money_to_customer(account_number: str, amount: str | float | int, currency: str, note: str) -> None:
@@ -1429,6 +1579,7 @@ def show_admin_dashboard(user):
                 "Name": c["full_name"],
                 "Username": c["username"],
                 "Account": c["account_number"],
+                "Email": c["email"] or "—",
                 "Balance": format_money(c["balance_cents"]),
                 "Created": c["created_at"][:19].replace("T", " ")
             })
@@ -1444,6 +1595,7 @@ def show_admin_dashboard(user):
         if customer:
             wallets = get_wallets(customer["id"])
             wallet_str = " · ".join([f"{w['currency']}: {format_money(w['balance_cents'], w['currency'])}" for w in wallets if w["balance_cents"] > 0]) or "Empty vault"
+            contact_bits = " · ".join(filter(None, [customer["email"], customer["phone"], customer["country"]])) or "No profile details on file"
             st_html(f"""
             <div class="onyx-card" style="padding:20px;">
                 <div style="display:flex;justify-content:space-between;align-items:center;">
@@ -1458,9 +1610,10 @@ def show_admin_dashboard(user):
                 </div>
                 <div style="margin-top:12px;padding-top:12px;border-top:1px solid rgba(212,175,55,0.08);">
                     <div style="color:#7a7a8a;font-size:11px;font-family:'Inter',sans-serif;">Vaults: {wallet_str}</div>
+                    <div style="color:#7a7a8a;font-size:11px;font-family:'Inter',sans-serif;margin-top:6px;">Contact: {contact_bits}</div>
                 </div>
             </div>
-            """, height=130)
+            """, height=150)
         else:
             st.error("Account not found in the registry.")
 
@@ -1526,3 +1679,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
