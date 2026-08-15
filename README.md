@@ -43,6 +43,19 @@ No hardcoded credentials exist in the source code.
 3. Sign in with your new admin credentials
 4. Customers can self-register via the **Create Account** tab
 
+5. License
+Copyright © 2026 Chetachukwu Sixtus Obiorah.
+All Rights Reserved.
+This project is proprietary.
+Unauthorized copying, modification, distribution, or commercial use of this software is strictly prohibited without prior written permission from the author.
+For licensing, collaboration, or purchase inquiries, please contact:
+sixtusobiorah70@gmail.com
+Note: The RarePlanes dataset is available under its own separate license terms (see cosmiqworks.org) and is not covered by the proprietary license above.
+Author
+Chetachukwu Sixtus Obiorah
+Computer Science Student | Aspiring Software Developer
+GitHub: Scepter70
+
 ---
 
 ## 🛠️ Local Setup
